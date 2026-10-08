@@ -17,52 +17,52 @@ class TestQueryBuilderCompiler:
     def test_path_descendants(self):
         compiled = compile_query({
             "type": "cq:Page",
-            "path": "/content/meridian"
+            "path": "/content/novaria"
         })
         assert compiled.sql2 == (
             "SELECT [n].* FROM [cq:Page] AS [n] "
-            "WHERE ISDESCENDANTNODE([n], '/content/meridian')"
+            "WHERE ISDESCENDANTNODE([n], '/content/novaria')"
         )
 
     def test_path_self(self):
         compiled = compile_query({
             "type": "cq:Page",
-            "path": "/content/meridian",
+            "path": "/content/novaria",
             "path.self": "true"
         })
-        assert "WHERE (ISDESCENDANTNODE([n], '/content/meridian') OR ISSAMENODE([n], '/content/meridian'))" in compiled.sql2
+        assert "WHERE (ISDESCENDANTNODE([n], '/content/novaria') OR ISSAMENODE([n], '/content/novaria'))" in compiled.sql2
 
     def test_path_flat_children(self):
         compiled = compile_query({
             "type": "cq:Page",
-            "path": "/content/meridian",
+            "path": "/content/novaria",
             "path.flat": "true"
         })
         assert compiled.sql2 == (
             "SELECT [n].* FROM [cq:Page] AS [n] "
-            "WHERE ISCHILDNODE([n], '/content/meridian')"
+            "WHERE ISCHILDNODE([n], '/content/novaria')"
         )
 
     def test_path_exact(self):
         compiled = compile_query({
             "type": "cq:Page",
-            "path": "/content/meridian",
+            "path": "/content/novaria",
             "path.exact": "true"
         })
         assert compiled.sql2 == (
             "SELECT [n].* FROM [cq:Page] AS [n] "
-            "WHERE ISSAMENODE([n], '/content/meridian')"
+            "WHERE ISSAMENODE([n], '/content/novaria')"
         )
 
     def test_property_equals(self):
         compiled = compile_query({
             "type": "cq:Page",
             "property": "jcr:content/cq:template",
-            "property.value": "/conf/meridian/templates/hotel"
+            "property.value": "/conf/novaria/templates/hotel"
         })
         assert compiled.sql2 == (
             "SELECT [n].* FROM [cq:Page] AS [n] "
-            "WHERE [n].[jcr:content/cq:template] = '/conf/meridian/templates/hotel'"
+            "WHERE [n].[jcr:content/cq:template] = '/conf/novaria/templates/hotel'"
         )
 
     def test_property_operations(self):
@@ -116,13 +116,13 @@ class TestQueryBuilderCompiler:
     def test_multiple_numbered_properties(self):
         compiled = compile_query({
             "type": "cq:Page",
-            "path": "/content/meridian",
+            "path": "/content/novaria",
             "1_property": "jcr:content/active",
             "1_property.value": "true",
             "2_property": "jcr:content/tier",
             "2_property.value": "luxury"
         })
-        assert "ISDESCENDANTNODE([n], '/content/meridian')" in compiled.sql2
+        assert "ISDESCENDANTNODE([n], '/content/novaria')" in compiled.sql2
         assert "[n].[jcr:content/active] = 'true'" in compiled.sql2
         assert "[n].[jcr:content/tier] = 'luxury'" in compiled.sql2
 
@@ -135,7 +135,7 @@ class TestQueryBuilderCompiler:
             "WHERE CONTAINS([n].*, 'luxury suites')"
         )
 
-    def test_fulltext_with_relpath(self):
+    def test_fulltext_with_relPath(self):
         compiled = compile_query({
             "type": "cq:Page",
             "fulltext": "penthouse",
@@ -156,10 +156,10 @@ class TestQueryBuilderCompiler:
     def test_tag_predicate(self):
         compiled = compile_query({
             "type": "cq:Page",
-            "tagid": "meridian:destinations/paris",
+            "tagid": "novaria:destinations/paris",
             "tagid.property": "jcr:content/cq:tags"
         })
-        assert "[n].[jcr:content/cq:tags] = 'meridian:destinations/paris'" in compiled.sql2
+        assert "[n].[jcr:content/cq:tags] = 'novaria:destinations/paris'" in compiled.sql2
 
     def test_ordering(self):
         # Default ASC
@@ -192,10 +192,68 @@ class TestQueryBuilderCompiler:
         assert compiled.limit is None
 
     def test_parse_query_string(self):
-        qs = "path=/content/meridian&type=cq:Page&1_property=jcr:content/active&1_property.value=true&p.limit=25&orderby=@jcr:score&orderby.sort=desc"
+        qs = "path=/content/novaria&type=cq:Page&1_property=jcr:content/active&1_property.value=true&p.limit=25&orderby=@jcr:score&orderby.sort=desc"
         compiler = QueryBuilderCompiler.from_query_string(qs)
         compiled = compiler.compile()
         assert compiled.limit == 25
-        assert "ISDESCENDANTNODE([n], '/content/meridian')" in compiled.sql2
+        assert "ISDESCENDANTNODE([n], '/content/novaria')" in compiled.sql2
         assert "[n].[jcr:content/active] = 'true'" in compiled.sql2
         assert "ORDER BY [n].[jcr:score] DESC" in compiled.sql2
+
+    def test_grouped_predicates_or(self):
+        compiled = compile_query({
+            "type": "cq:Page",
+            "1_group.p.or": "true",
+            "1_group.1_property": "jcr:content/cq:template",
+            "1_group.1_property.value": "/conf/novaria/templates/hotel",
+            "1_group.2_property": "jcr:content/cq:template",
+            "1_group.2_property.value": "/conf/novaria/templates/resort"
+        })
+        assert "WHERE ([n].[jcr:content/cq:template] = '/conf/novaria/templates/hotel' OR [n].[jcr:content/cq:template] = '/conf/novaria/templates/resort')" in compiled.sql2
+
+    def test_grouped_predicates_not(self):
+        compiled = compile_query({
+            "type": "cq:Page",
+            "1_group.p.not": "true",
+            "1_group.property": "jcr:content/archived",
+            "1_group.property.value": "true"
+        })
+        assert "WHERE NOT ([n].[jcr:content/archived] = 'true')" in compiled.sql2
+
+    def test_multiple_groups_combined(self):
+        compiled = compile_query({
+            "type": "cq:Page",
+            "path": "/content/novaria",
+            "1_group.p.or": "true",
+            "1_group.1_property": "jcr:content/tier",
+            "1_group.1_property.value": "luxury",
+            "1_group.2_property": "jcr:content/tier",
+            "1_group.2_property.value": "premium",
+            "2_group.property": "jcr:content/status",
+            "2_group.property.value": "active"
+        })
+        assert "ISDESCENDANTNODE([n], '/content/novaria')" in compiled.sql2
+        assert "([n].[jcr:content/tier] = 'luxury' OR [n].[jcr:content/tier] = 'premium')" in compiled.sql2
+        assert "[n].[jcr:content/status] = 'active'" in compiled.sql2
+
+    def test_relative_date_bounds(self):
+        compiled = compile_query({
+            "type": "cq:Page",
+            "daterange.property": "jcr:content/cq:lastModified",
+            "daterange.lowerBound": "-1d",
+            "daterange.lowerOperation": ">="
+        })
+        assert "[n].[jcr:content/cq:lastModified] >= CAST(" in compiled.sql2
+        assert "T" in compiled.sql2  # ISO timestamp
+        assert "Z' AS DATE)" in compiled.sql2
+
+    def test_multiple_numbered_tags_and(self):
+        compiled = compile_query({
+            "type": "cq:Page",
+            "tagid.property": "jcr:content/cq:tags",
+            "tagid.and": "true",
+            "1_tagid": "novaria:beach",
+            "2_tagid": "novaria:spa"
+        })
+        assert "([n].[jcr:content/cq:tags] = 'novaria:beach' AND [n].[jcr:content/cq:tags] = 'novaria:spa')" in compiled.sql2
+

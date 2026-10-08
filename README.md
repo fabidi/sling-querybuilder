@@ -77,13 +77,13 @@ uv pip install sling-querybuilder
 
 #### Compile QueryBuilder to JCR-SQL2:
 ```bash
-sling-querybuilder compile "path=/content/meridian&type=cq:Page&1_property=jcr:content/active&1_property.value=true&p.limit=20"
+sling-querybuilder compile "path=/content/novaria&type=cq:Page&1_property=jcr:content/active&1_property.value=true&p.limit=20"
 ```
 
 **Output:**
 ```sql
 --- Compiled JCR-SQL2 ---
-SELECT [n].* FROM [cq:Page] AS [n] WHERE ISDESCENDANTNODE([n], '/content/meridian') AND [n].[jcr:content/active] = 'true'
+SELECT [n].* FROM [cq:Page] AS [n] WHERE ISDESCENDANTNODE([n], '/content/novaria') AND [n].[jcr:content/active] = 'true'
 --- Metadata ---
 Limit:  20
 Offset: 0

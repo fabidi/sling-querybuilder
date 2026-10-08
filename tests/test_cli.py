@@ -24,11 +24,11 @@ class TestCLI:
         assert args.port == 8081
 
     def test_cli_compile_execution(self, capsys):
-        exit_code = main(["compile", "path=/content/meridian&type=cq:Page&p.limit=15"])
+        exit_code = main(["compile", "path=/content/novaria&type=cq:Page&p.limit=15"])
         assert exit_code == 0
         captured = capsys.readouterr()
         assert "SELECT [n].* FROM [cq:Page] AS [n]" in captured.out
-        assert "ISDESCENDANTNODE([n], '/content/meridian')" in captured.out
+        assert "ISDESCENDANTNODE([n], '/content/novaria')" in captured.out
         assert "Limit:  15" in captured.out
         assert "Offset: 0" in captured.out
 

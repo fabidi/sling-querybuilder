@@ -9,13 +9,42 @@ from __future__ import annotations
 
 import re
 import urllib.parse
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def _escape(val: Any) -> str:
     """Escapes single quotes for JCR-SQL2 literal."""
     return str(val).replace("'", "''")
+
+
+def _parse_relative_date(date_str: str) -> str:
+    """
+    Parses relative date strings (e.g., -1d, -7d, -1w, -1M, -1y, +2d)
+    into an ISO-8601 UTC timestamp.
+    """
+    date_str = date_str.strip()
+    match = re.match(r"^([+-]?\d+)([dDwWmMyY])$", date_str)
+    if not match:
+        return date_str
+
+    amount = int(match.group(1))
+    unit = match.group(2).lower()
+    now = datetime.now(timezone.utc)
+
+    if unit == "d":
+        target = now + timedelta(days=amount)
+    elif unit == "w":
+        target = now + timedelta(weeks=amount)
+    elif unit == "m":
+        target = now + timedelta(days=amount * 30)
+    elif unit == "y":
+        target = now + timedelta(days=amount * 365)
+    else:
+        target = now
+
+    return target.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 @dataclass
@@ -31,6 +60,8 @@ class CompiledQuery:
 class QueryBuilderCompiler:
     """
     Translates AEM QueryBuilder predicate parameters into standard JCR-SQL2 queries.
+    Supports path filters, property matching, fulltext search, date ranges,
+    tags, ordering, pagination, and recursive boolean groups (1_group.p.or).
     """
 
     DEFAULT_SELECTOR = "n"
@@ -50,7 +81,6 @@ class QueryBuilderCompiler:
     def from_query_string(cls, query_string: str, selector: str = DEFAULT_SELECTOR) -> QueryBuilderCompiler:
         """Parses a standard URL query string into predicate dictionary."""
         parsed = urllib.parse.parse_qs(query_string, keep_blank_values=True)
-        # Flatten single item lists
         predicates: Dict[str, Any] = {}
         for k, v in parsed.items():
             predicates[k] = v[0] if len(v) == 1 else v
@@ -64,22 +94,7 @@ class QueryBuilderCompiler:
         node_type = self.params.get("type", "nt:base").strip()
 
         # 2. Gather WHERE clauses
-        where_clauses: List[str] = []
-
-        # Path predicates
-        self._compile_path(where_clauses)
-
-        # Property predicates (including numbered: 1_property, 2_property, etc.)
-        self._compile_properties(where_clauses)
-
-        # Fulltext search
-        self._compile_fulltext(where_clauses)
-
-        # Date ranges
-        self._compile_daterange(where_clauses)
-
-        # Tag predicates
-        self._compile_tags(where_clauses)
+        where_clauses: List[str] = self._compile_params(self.params)
 
         # Build base SQL2 SELECT
         sql = f"SELECT [{selector}].* FROM [{node_type}] AS [{selector}]"
@@ -88,12 +103,12 @@ class QueryBuilderCompiler:
             sql += f" WHERE {' AND '.join(where_clauses)}"
 
         # Ordering
-        order_clause = self._compile_orderby()
+        order_clause = self._compile_orderby(self.params)
         if order_clause:
             sql += f" {order_clause}"
 
         # Pagination metadata
-        limit, offset = self._extract_pagination()
+        limit, offset = self._extract_pagination(self.params)
 
         return CompiledQuery(
             sql2=sql,
@@ -103,36 +118,68 @@ class QueryBuilderCompiler:
             parameters=self.params
         )
 
-    def _compile_path(self, where_clauses: List[str]) -> None:
+    def _compile_params(self, params: Dict[str, Any]) -> List[str]:
+        """Compiles a flat dictionary of predicates into a list of SQL2 WHERE expressions."""
+        clauses: List[str] = []
+
+        # 1. Path predicates
+        path_clause = self._compile_path(params)
+        if path_clause:
+            clauses.append(path_clause)
+
+        # 2. Direct property predicates
+        prop_clauses = self._compile_properties(params)
+        clauses.extend(prop_clauses)
+
+        # 3. Fulltext search
+        ft_clause = self._compile_fulltext(params)
+        if ft_clause:
+            clauses.append(ft_clause)
+
+        # 4. Date ranges
+        dr_clauses = self._compile_daterange(params)
+        clauses.extend(dr_clauses)
+
+        # 5. Tag predicates
+        tag_clauses = self._compile_tags(params)
+        clauses.extend(tag_clauses)
+
+        # 6. Group predicates (e.g. 1_group, 2_group, group)
+        group_clauses = self._compile_groups(params)
+        clauses.extend(group_clauses)
+
+        return clauses
+
+    def _compile_path(self, params: Dict[str, Any]) -> Optional[str]:
         """Compiles path predicate and modifiers (path.self, path.flat, path.exact)."""
-        path = self.params.get("path")
+        path = params.get("path")
         if not path or not isinstance(path, str):
-            return
+            return None
 
         clean_path = path.strip().rstrip("/")
         if not clean_path:
             clean_path = "/"
 
-        exact = str(self.params.get("path.exact", "false")).lower() in ("true", "1")
-        flat = str(self.params.get("path.flat", "false")).lower() in ("true", "1")
-        include_self = str(self.params.get("path.self", "false")).lower() in ("true", "1")
+        exact = str(params.get("path.exact", "false")).lower() in ("true", "1")
+        flat = str(params.get("path.flat", "false")).lower() in ("true", "1")
+        include_self = str(params.get("path.self", "false")).lower() in ("true", "1")
 
         s = self.selector
         if exact:
-            where_clauses.append(f"ISSAMENODE([{s}], '{clean_path}')")
+            return f"ISSAMENODE([{s}], '{clean_path}')"
         elif flat:
-            where_clauses.append(f"ISCHILDNODE([{s}], '{clean_path}')")
+            return f"ISCHILDNODE([{s}], '{clean_path}')"
         elif include_self:
-            where_clauses.append(
-                f"(ISDESCENDANTNODE([{s}], '{clean_path}') OR ISSAMENODE([{s}], '{clean_path}'))"
-            )
+            return f"(ISDESCENDANTNODE([{s}], '{clean_path}') OR ISSAMENODE([{s}], '{clean_path}'))"
         else:
-            where_clauses.append(f"ISDESCENDANTNODE([{s}], '{clean_path}')")
+            return f"ISDESCENDANTNODE([{s}], '{clean_path}')"
 
-    def _compile_properties(self, where_clauses: List[str]) -> None:
-        """Finds and compiles all property predicate groups (e.g. 'property', '1_property')."""
+    def _compile_properties(self, params: Dict[str, Any]) -> List[str]:
+        """Finds and compiles all direct property predicate groups (e.g. 'property', '1_property')."""
+        clauses: List[str] = []
         prefixes = set()
-        for k in self.params:
+        for k in params:
+            # Match top-level property, but ignore ones inside groups (e.g. 1_group.property)
             match = re.match(r"^(\d+_)?property$", k)
             if match:
                 prefixes.add(match.group(1) or "")
@@ -143,16 +190,16 @@ class QueryBuilderCompiler:
         s = self.selector
         for prefix in sorted_prefixes:
             prop_key = f"{prefix}property"
-            prop_name = str(self.params.get(prop_key, "")).strip().lstrip("@")
+            prop_name = str(params.get(prop_key, "")).strip().lstrip("@")
             if not prop_name:
                 continue
 
-            op = str(self.params.get(f"{prefix}property.operation", "equals")).lower().strip()
-            is_and = str(self.params.get(f"{prefix}property.and", "false")).lower() in ("true", "1")
+            op = str(params.get(f"{prefix}property.operation", "equals")).lower().strip()
+            is_and = str(params.get(f"{prefix}property.and", "false")).lower() in ("true", "1")
 
             # Collect values
             values: List[str] = []
-            direct_val = self.params.get(f"{prefix}property.value")
+            direct_val = params.get(f"{prefix}property.value")
             if direct_val is not None:
                 if isinstance(direct_val, list):
                     values.extend([str(v) for v in direct_val])
@@ -161,7 +208,7 @@ class QueryBuilderCompiler:
 
             # Numbered values: property.1_value, property.2_value
             numbered_vals = []
-            for k, v in self.params.items():
+            for k, v in params.items():
                 val_match = re.match(rf"^{re.escape(prefix)}property\.(\d+)_value$", k)
                 if val_match:
                     numbered_vals.append((int(val_match.group(1)), str(v)))
@@ -171,95 +218,163 @@ class QueryBuilderCompiler:
 
             # Build condition for this property group
             if op == "exists":
-                where_clauses.append(f"[{s}].[{prop_name}] IS NOT NULL")
+                clauses.append(f"[{s}].[{prop_name}] IS NOT NULL")
             elif op == "not":
-                where_clauses.append(f"[{s}].[{prop_name}] IS NULL")
+                clauses.append(f"[{s}].[{prop_name}] IS NULL")
             elif op == "unequals":
                 if values:
-                    val = values[0].replace("'", "''")
-                    where_clauses.append(f"[{s}].[{prop_name}] <> '{val}'")
+                    val = _escape(values[0])
+                    clauses.append(f"[{s}].[{prop_name}] <> '{val}'")
             elif op == "like":
                 if values:
-                    val = values[0].replace("'", "''")
-                    where_clauses.append(f"[{s}].[{prop_name}] LIKE '{val}'")
+                    val = _escape(values[0])
+                    clauses.append(f"[{s}].[{prop_name}] LIKE '{val}'")
             else:  # default 'equals'
                 if len(values) == 1:
                     val = _escape(values[0])
-                    where_clauses.append(f"[{s}].[{prop_name}] = '{val}'")
+                    clauses.append(f"[{s}].[{prop_name}] = '{val}'")
                 elif len(values) > 1:
                     connector = " AND " if is_and else " OR "
                     sub = [f"[{s}].[{prop_name}] = '{_escape(v)}'" for v in values]
-                    where_clauses.append(f"({connector.join(sub)})")
+                    clauses.append(f"({connector.join(sub)})")
 
-    def _compile_fulltext(self, where_clauses: List[str]) -> None:
+        return clauses
+
+    def _compile_groups(self, params: Dict[str, Any]) -> List[str]:
+        """
+        Extracts and recursively compiles boolean groups (e.g. '1_group.property', '1_group.p.or').
+        """
+        group_keys: Dict[str, Dict[str, Any]] = {}
+        for k, v in params.items():
+            match = re.match(r"^(\d+_)?group\.(.+)$", k)
+            if match:
+                grp_prefix = match.group(1) or ""
+                sub_key = match.group(2)
+                if grp_prefix not in group_keys:
+                    group_keys[grp_prefix] = {}
+                group_keys[grp_prefix][sub_key] = v
+
+        sorted_groups = sorted(list(group_keys.keys()), key=lambda x: (int(x.rstrip("_")) if x else -1))
+        clauses: List[str] = []
+
+        for grp in sorted_groups:
+            sub_params = group_keys[grp]
+            is_or = str(sub_params.get("p.or", "false")).lower() in ("true", "1")
+            is_not = str(sub_params.get("p.not", "false")).lower() in ("true", "1")
+
+            sub_clauses = self._compile_params(sub_params)
+            if not sub_clauses:
+                continue
+
+            connector = " OR " if is_or else " AND "
+            if len(sub_clauses) == 1 and not is_not:
+                clauses.append(sub_clauses[0])
+            else:
+                combined = f"({connector.join(sub_clauses)})"
+                if is_not:
+                    combined = f"NOT {combined}"
+                clauses.append(combined)
+
+        return clauses
+
+    def _compile_fulltext(self, params: Dict[str, Any]) -> Optional[str]:
         """Compiles fulltext search predicate."""
-        fulltext = self.params.get("fulltext")
+        fulltext = params.get("fulltext")
         if not fulltext:
-            return
+            return None
         
-        rel_path = self.params.get("fulltext.relPath")
+        rel_path = params.get("fulltext.relPath")
         s = self.selector
-        escaped_text = str(fulltext).replace("'", "''")
+        escaped_text = _escape(fulltext)
         if rel_path:
             clean_rel = str(rel_path).strip().lstrip("@")
-            where_clauses.append(f"CONTAINS([{s}].[{clean_rel}], '{escaped_text}')")
-        else:
-            where_clauses.append(f"CONTAINS([{s}].*, '{escaped_text}')")
+            return f"CONTAINS([{s}].[{clean_rel}], '{escaped_text}')"
+        return f"CONTAINS([{s}].*, '{escaped_text}')"
 
-    def _compile_daterange(self, where_clauses: List[str]) -> None:
-        """Compiles date range predicates."""
-        prop = self.params.get("daterange.property")
+    def _compile_daterange(self, params: Dict[str, Any]) -> List[str]:
+        """Compiles date range predicates with support for relative date math."""
+        clauses: List[str] = []
+        prop = params.get("daterange.property")
         if not prop:
-            return
+            return clauses
         
         clean_prop = str(prop).strip().lstrip("@")
         s = self.selector
-        lower = self.params.get("daterange.lowerBound")
-        upper = self.params.get("daterange.upperBound")
+        lower = params.get("daterange.lowerBound")
+        upper = params.get("daterange.upperBound")
+        lower_op = str(params.get("daterange.lowerOperation", ">=")).strip()
+        upper_op = str(params.get("daterange.upperOperation", "<=")).strip()
 
         if lower:
-            escaped_lower = str(lower).replace("'", "''")
-            where_clauses.append(f"[{s}].[{clean_prop}] >= CAST('{escaped_lower}' AS DATE)")
+            parsed_lower = _parse_relative_date(str(lower))
+            escaped_lower = _escape(parsed_lower)
+            clauses.append(f"[{s}].[{clean_prop}] {lower_op} CAST('{escaped_lower}' AS DATE)")
         if upper:
-            escaped_upper = str(upper).replace("'", "''")
-            where_clauses.append(f"[{s}].[{clean_prop}] <= CAST('{escaped_upper}' AS DATE)")
+            parsed_upper = _parse_relative_date(str(upper))
+            escaped_upper = _escape(parsed_upper)
+            clauses.append(f"[{s}].[{clean_prop}] {upper_op} CAST('{escaped_upper}' AS DATE)")
 
-    def _compile_tags(self, where_clauses: List[str]) -> None:
-        """Compiles tagid predicate."""
-        tagid = self.params.get("tagid")
-        if not tagid:
-            return
-        
-        tag_prop = self.params.get("tagid.property", "jcr:content/cq:tags")
+        return clauses
+
+    def _compile_tags(self, params: Dict[str, Any]) -> List[str]:
+        """Compiles tagid predicates with support for multiple numbered tags and AND/OR."""
+        clauses: List[str] = []
+        tag_prop = params.get("tagid.property", "jcr:content/cq:tags")
         clean_prop = str(tag_prop).strip().lstrip("@")
+        is_and = str(params.get("tagid.and", "false")).lower() in ("true", "1")
         s = self.selector
-        escaped_tag = str(tagid).replace("'", "''")
-        where_clauses.append(f"[{s}].[{clean_prop}] = '{escaped_tag}'")
 
-    def _compile_orderby(self) -> Optional[str]:
+        tag_values: List[str] = []
+        if "tagid" in params and params["tagid"]:
+            val = params["tagid"]
+            if isinstance(val, list):
+                tag_values.extend([str(v) for v in val])
+            else:
+                tag_values.append(str(val))
+
+        # Check numbered tags: 1_tagid, 2_tagid
+        numbered_tags = []
+        for k, v in params.items():
+            match = re.match(r"^(\d+)_tagid$", k)
+            if match and v:
+                numbered_tags.append((int(match.group(1)), str(v)))
+        numbered_tags.sort(key=lambda x: x[0])
+        for _, v in numbered_tags:
+            tag_values.append(v)
+
+        if len(tag_values) == 1:
+            clauses.append(f"[{s}].[{clean_prop}] = '{_escape(tag_values[0])}'")
+        elif len(tag_values) > 1:
+            connector = " AND " if is_and else " OR "
+            sub = [f"[{s}].[{clean_prop}] = '{_escape(v)}'" for v in tag_values]
+            clauses.append(f"({connector.join(sub)})")
+
+        return clauses
+
+    def _compile_orderby(self, params: Dict[str, Any]) -> Optional[str]:
         """Compiles ORDER BY clause."""
-        orderby = self.params.get("orderby")
+        orderby = params.get("orderby")
         if not orderby:
             return None
 
         clean_prop = str(orderby).strip().lstrip("@")
-        sort_dir = str(self.params.get("orderby.sort", "asc")).upper().strip()
+        sort_dir = str(params.get("orderby.sort", "asc")).upper().strip()
         if sort_dir not in ("ASC", "DESC"):
             sort_dir = "ASC"
 
         s = self.selector
         return f"ORDER BY [{s}].[{clean_prop}] {sort_dir}"
 
-    def _extract_pagination(self) -> tuple[Optional[int], int]:
+    def _extract_pagination(self, params: Dict[str, Any]) -> Tuple[Optional[int], int]:
         """Extracts p.limit and p.offset parameters."""
-        raw_limit = self.params.get("p.limit", "10")
+        raw_limit = params.get("p.limit", "10")
         try:
             limit_val = int(raw_limit)
             limit = None if limit_val < 0 else limit_val
         except (ValueError, TypeError):
             limit = 10
 
-        raw_offset = self.params.get("p.offset", "0")
+        raw_offset = params.get("p.offset", "0")
         try:
             offset = max(0, int(raw_offset))
         except (ValueError, TypeError):

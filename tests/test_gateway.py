@@ -46,7 +46,7 @@ class TestQueryBuilderGateway:
     @patch.object(QueryBuilderGateway, "_query_sling_sql2")
     def test_http_get_querybuilder(self, mock_query):
         mock_query.return_value = [
-            {"path": "/content/meridian/en/hotels/paris-grand", "title": "Paris Grand"}
+            {"path": "/content/novaria/en/hotels/paris-grand", "title": "Paris Grand"}
         ]
         gw = QueryBuilderGateway(port=18081)
         gw.start(blocking=False)
@@ -60,20 +60,20 @@ class TestQueryBuilderGateway:
                 assert data["status"] == "healthy"
 
             # Test /bin/querybuilder.json GET
-            url = "http://127.0.0.1:18081/bin/querybuilder.json?path=/content/meridian&type=cq:Page"
+            url = "http://127.0.0.1:18081/bin/querybuilder.json?path=/content/novaria&type=cq:Page"
             with urllib.request.urlopen(url) as resp:
                 assert resp.status == 200
                 res = json.loads(resp.read().decode("utf-8"))
                 assert res["success"] is True
                 assert res["results"] == 1
-                assert res["hits"][0]["path"] == "/content/meridian/en/hotels/paris-grand"
+                assert res["hits"][0]["path"] == "/content/novaria/en/hotels/paris-grand"
         finally:
             gw.stop()
 
     @patch.object(QueryBuilderGateway, "_query_sling_sql2")
     def test_http_post_json(self, mock_query):
         mock_query.return_value = [
-            {"path": "/content/meridian/en/hotels/london-house"}
+            {"path": "/content/novaria/en/hotels/london-house"}
         ]
         gw = QueryBuilderGateway(port=18082)
         gw.start(blocking=False)
@@ -82,7 +82,7 @@ class TestQueryBuilderGateway:
         try:
             req = urllib.request.Request(
                 "http://127.0.0.1:18082/bin/querybuilder.json",
-                data=json.dumps({"path": "/content/meridian", "type": "cq:Page"}).encode("utf-8"),
+                data=json.dumps({"path": "/content/novaria", "type": "cq:Page"}).encode("utf-8"),
                 headers={"Content-Type": "application/json"}
             )
             with urllib.request.urlopen(req) as resp:
