@@ -24,13 +24,19 @@ Because of this gap, anyone building integration tests, automated migration tool
 ## Architecture
 
 ```mermaid
-flowchart LR
-    A["Client / AI Agent / MCP Server"] -->|"GET /bin/querybuilder.json"| B["sling-querybuilder Gateway"]
-    B -->|Predicates| C["QueryBuilderCompiler"]
-    C -->|JCR-SQL2 Statement| B
-    B -->|"GET /bin/query.json?queryType=JCR-SQL2"| D["Apache Sling 12 / Oak"]
-    D -->|"Oak Lucene / Node Results"| B
-    B -->|"AEM-format JSON (hits, total)"| A
+sequenceDiagram
+    autonumber
+    actor Client as AI Agent / Client
+    participant GW as sling-querybuilder Gateway
+    participant C as QueryBuilderCompiler
+    participant Sling as Apache Sling 12 / Oak
+
+    Client->>GW: GET /bin/querybuilder.json (predicates)
+    GW->>C: Compile predicates
+    C-->>GW: JCR-SQL2 query string
+    GW->>Sling: GET /bin/query.json (JCR-SQL2)
+    Sling-->>GW: Oak Lucene / Node results
+    GW-->>Client: AEM-format JSON (hits, total)
 ```
 
 ---
