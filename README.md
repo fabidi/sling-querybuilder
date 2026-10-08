@@ -1,7 +1,8 @@
 # sling-querybuilder
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](https://www.python.org/)
+[![CI](https://github.com/fabidi/sling-querybuilder/actions/workflows/ci.yml/badge.svg)](https://github.com/fabidi/sling-querybuilder/actions/workflows/ci.yml)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20runtime-brightgreen.svg)]()
 
 > **The first open-source QueryBuilder to JCR-SQL2 compiler and runtime gateway for Apache Sling & Jackrabbit Oak.**
