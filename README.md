@@ -25,12 +25,12 @@ Because of this gap, anyone building integration tests, automated migration tool
 
 ```mermaid
 flowchart LR
-    A[Client / AI Agent / MCP Server] -->|GET /bin/querybuilder.json| B[sling-querybuilder Gateway]
-    B -->|Predicates| C[QueryBuilderCompiler]
+    A["Client / AI Agent / MCP Server"] -->|"GET /bin/querybuilder.json"| B["sling-querybuilder Gateway"]
+    B -->|Predicates| C["QueryBuilderCompiler"]
     C -->|JCR-SQL2 Statement| B
-    B -->|GET /bin/query.json?queryType=JCR-SQL2| D[Apache Sling 12 / Oak]
-    D -->|Oak Lucene / Node Results| B
-    B -->|AEM-format JSON hits: [...], total: N| A
+    B -->|"GET /bin/query.json?queryType=JCR-SQL2"| D["Apache Sling 12 / Oak"]
+    D -->|"Oak Lucene / Node Results"| B
+    B -->|"AEM-format JSON (hits, total)"| A
 ```
 
 ---
@@ -163,7 +163,7 @@ curl -u admin:admin http://localhost:8080/system/console/status-productinfo.json
 
 ## Integration with `aem-mcp-starter-kit`
 
-When developing Agentic AI workflows with [`aem-mcp-starter-kit`](https://github.com/your-username/aem-mcp-starter-kit):
+When developing Agentic AI workflows with [`aem-mcp-starter-kit`](https://github.com/fabidi/aem-mcp-starter-kit):
 
 1. Spin up Apache Sling 12 in Docker (`docker compose up -d`).
 2. Start `sling-querybuilder gateway --sling-url http://localhost:8080 --port 8081`.

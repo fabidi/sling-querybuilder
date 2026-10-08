@@ -29,6 +29,11 @@ dev = [
     "pytest==9.1.1",
 ]
 
+[project.urls]
+Homepage = "https://github.com/fabidi/sling-querybuilder"
+Repository = "https://github.com/fabidi/sling-querybuilder.git"
+Issues = "https://github.com/fabidi/sling-querybuilder/issues"
+
 [project.scripts]
 sling-querybuilder = "sling_querybuilder.cli:main"
 
