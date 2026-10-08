@@ -128,71 +128,105 @@ class QueryBuilderCompiler:
         """Compiles a flat dictionary of predicates into a list of SQL2 WHERE expressions."""
         clauses: List[str] = []
 
-        # 1. Path predicates
-        path_clause = self._compile_path(params)
-        if path_clause:
-            clauses.append(path_clause)
+        # 1. Path predicates (including 1_path, 2_path)
+        path_clauses = self._compile_path(params)
+        clauses.extend(path_clauses)
 
-        # 2. Direct property predicates
+        # 2. Node name predicates (nodename, 1_nodename, etc.)
+        nodename_clauses = self._compile_nodenames(params)
+        clauses.extend(nodename_clauses)
+
+        # 3. Direct property predicates
         prop_clauses = self._compile_properties(params)
         clauses.extend(prop_clauses)
 
-        # 3. Fulltext search
-        ft_clause = self._compile_fulltext(params)
-        if ft_clause:
-            clauses.append(ft_clause)
+        # 4. Fulltext search (fulltext, 1_fulltext, etc.)
+        ft_clauses = self._compile_fulltext(params)
+        clauses.extend(ft_clauses)
 
-        # 4. Date ranges
+        # 5. Date ranges (daterange, 1_daterange, etc.)
         dr_clauses = self._compile_daterange(params)
         clauses.extend(dr_clauses)
 
-        # 5. Tag predicates
+        # 6. Tag predicates
         tag_clauses = self._compile_tags(params)
         clauses.extend(tag_clauses)
 
-        # 6. Group predicates (e.g. 1_group, 2_group, group)
+        # 7. Group predicates (e.g. 1_group, 2_group, group)
         group_clauses = self._compile_groups(params)
         clauses.extend(group_clauses)
 
         return clauses
 
-    def _compile_path(self, params: Dict[str, Any]) -> Optional[str]:
-        """Compiles path predicate and modifiers (path.self, path.flat, path.exact)."""
-        path = params.get("path")
-        if not path or not isinstance(path, str):
-            return None
+    def _compile_path(self, params: Dict[str, Any]) -> List[str]:
+        """Compiles path predicates and numbered paths (1_path, 2_path) with modifiers."""
+        prefixes = set()
+        for k in params:
+            match = re.match(r"^(\d+_)?path$", k)
+            if match:
+                prefixes.add(match.group(1) or "")
 
-        clean_path = path.strip().rstrip("/")
-        if not clean_path:
-            clean_path = "/"
-
-        exact = str(params.get("path.exact", "false")).lower() in ("true", "1")
-        flat = str(params.get("path.flat", "false")).lower() in ("true", "1")
-        include_self = str(params.get("path.self", "false")).lower() in ("true", "1")
-
+        sorted_prefixes = sorted(list(prefixes), key=lambda x: (int(x.rstrip("_")) if x else -1))
         s = self.selector
-        if exact:
-            return f"ISSAMENODE([{s}], '{clean_path}')"
-        elif flat:
-            return f"ISCHILDNODE([{s}], '{clean_path}')"
-        elif include_self:
-            return f"(ISDESCENDANTNODE([{s}], '{clean_path}') OR ISSAMENODE([{s}], '{clean_path}'))"
-        else:
-            return f"ISDESCENDANTNODE([{s}], '{clean_path}')"
+        
+        path_clauses: List[str] = []
+        for prefix in sorted_prefixes:
+            path_val = params.get(f"{prefix}path")
+            if not path_val or not isinstance(path_val, str):
+                continue
+
+            clean_path = path_val.strip().rstrip("/") or "/"
+            exact = str(params.get(f"{prefix}path.exact", params.get("path.exact", "false"))).lower() in ("true", "1")
+            flat = str(params.get(f"{prefix}path.flat", params.get("path.flat", "false"))).lower() in ("true", "1")
+            include_self = str(params.get(f"{prefix}path.self", params.get("path.self", "false"))).lower() in ("true", "1")
+
+            if exact:
+                path_clauses.append(f"ISSAMENODE([{s}], '{clean_path}')")
+            elif flat:
+                path_clauses.append(f"ISCHILDNODE([{s}], '{clean_path}')")
+            elif include_self:
+                path_clauses.append(f"(ISDESCENDANTNODE([{s}], '{clean_path}') OR ISSAMENODE([{s}], '{clean_path}'))")
+            else:
+                path_clauses.append(f"ISDESCENDANTNODE([{s}], '{clean_path}')")
+
+        if len(path_clauses) == 1:
+            return [path_clauses[0]]
+        elif len(path_clauses) > 1:
+            return [f"({' OR '.join(path_clauses)})"]
+        return []
+
+    def _compile_nodenames(self, params: Dict[str, Any]) -> List[str]:
+        """Compiles nodename predicates (e.g. 'nodename', '1_nodename')."""
+        clauses: List[str] = []
+        prefixes = set()
+        for k in params:
+            match = re.match(r"^(\d+_)?nodename$", k)
+            if match:
+                prefixes.add(match.group(1) or "")
+
+        sorted_prefixes = sorted(list(prefixes), key=lambda x: (int(x.rstrip("_")) if x else -1))
+        s = self.selector
+        for prefix in sorted_prefixes:
+            name_val = str(params.get(f"{prefix}nodename", "")).strip()
+            if not name_val:
+                continue
+            if "*" in name_val:
+                like_val = name_val.replace("*", "%")
+                clauses.append(f"NAME([{s}]) LIKE '{_escape(like_val)}'")
+            else:
+                clauses.append(f"NAME([{s}]) = '{_escape(name_val)}'")
+        return clauses
 
     def _compile_properties(self, params: Dict[str, Any]) -> List[str]:
         """Finds and compiles all direct property predicate groups (e.g. 'property', '1_property')."""
         clauses: List[str] = []
         prefixes = set()
         for k in params:
-            # Match top-level property, but ignore ones inside groups (e.g. 1_group.property)
             match = re.match(r"^(\d+_)?property$", k)
             if match:
                 prefixes.add(match.group(1) or "")
 
-        # Sort prefixes deterministically (empty prefix first, then numbered)
         sorted_prefixes = sorted(list(prefixes), key=lambda x: (int(x.rstrip("_")) if x else -1))
-
         s = self.selector
         for prefix in sorted_prefixes:
             prop_key = f"{prefix}property"
@@ -228,13 +262,38 @@ class QueryBuilderCompiler:
             elif op == "not":
                 clauses.append(f"[{s}].[{prop_name}] IS NULL")
             elif op == "unequals":
-                if values:
-                    val = _escape(values[0])
-                    clauses.append(f"[{s}].[{prop_name}] <> '{val}'")
+                if len(values) == 1:
+                    clauses.append(f"[{s}].[{prop_name}] <> '{_escape(values[0])}'")
+                elif len(values) > 1:
+                    sub = [f"[{s}].[{prop_name}] <> '{_escape(v)}'" for v in values]
+                    clauses.append(f"({' AND '.join(sub)})")
             elif op == "like":
+                if len(values) == 1:
+                    clauses.append(f"[{s}].[{prop_name}] LIKE '{_escape(values[0])}'")
+                elif len(values) > 1:
+                    connector = " AND " if is_and else " OR "
+                    sub = [f"[{s}].[{prop_name}] LIKE '{_escape(v)}'" for v in values]
+                    clauses.append(f"({connector.join(sub)})")
+            elif op == "contains":
+                formatted_vals = [v if ("%" in v or "_" in v) else f"%{v}%" for v in values]
+                if len(formatted_vals) == 1:
+                    clauses.append(f"[{s}].[{prop_name}] LIKE '{_escape(formatted_vals[0])}'")
+                elif len(formatted_vals) > 1:
+                    connector = " AND " if is_and else " OR "
+                    sub = [f"[{s}].[{prop_name}] LIKE '{_escape(v)}'" for v in formatted_vals]
+                    clauses.append(f"({connector.join(sub)})")
+            elif op in (">", "greater"):
                 if values:
-                    val = _escape(values[0])
-                    clauses.append(f"[{s}].[{prop_name}] LIKE '{val}'")
+                    clauses.append(f"[{s}].[{prop_name}] > '{_escape(values[0])}'")
+            elif op in (">=", "greater_equal"):
+                if values:
+                    clauses.append(f"[{s}].[{prop_name}] >= '{_escape(values[0])}'")
+            elif op in ("<", "lower"):
+                if values:
+                    clauses.append(f"[{s}].[{prop_name}] < '{_escape(values[0])}'")
+            elif op in ("<=", "lower_equal"):
+                if values:
+                    clauses.append(f"[{s}].[{prop_name}] <= '{_escape(values[0])}'")
             else:  # default 'equals'
                 if len(values) == 1:
                     val = _escape(values[0])
@@ -283,42 +342,58 @@ class QueryBuilderCompiler:
 
         return clauses
 
-    def _compile_fulltext(self, params: Dict[str, Any]) -> Optional[str]:
-        """Compiles fulltext search predicate."""
-        fulltext = params.get("fulltext")
-        if not fulltext:
-            return None
-        
-        rel_path = params.get("fulltext.relPath")
+    def _compile_fulltext(self, params: Dict[str, Any]) -> List[str]:
+        """Compiles fulltext search predicates (fulltext, 1_fulltext, etc.)."""
+        clauses: List[str] = []
+        prefixes = set()
+        for k in params:
+            match = re.match(r"^(\d+_)?fulltext$", k)
+            if match:
+                prefixes.add(match.group(1) or "")
+
+        sorted_prefixes = sorted(list(prefixes), key=lambda x: (int(x.rstrip("_")) if x else -1))
         s = self.selector
-        escaped_text = _escape(fulltext)
-        if rel_path:
-            clean_rel = str(rel_path).strip().lstrip("@")
-            return f"CONTAINS([{s}].[{clean_rel}], '{escaped_text}')"
-        return f"CONTAINS([{s}].*, '{escaped_text}')"
+        for prefix in sorted_prefixes:
+            text = params.get(f"{prefix}fulltext")
+            if not text:
+                continue
+            rel_path = params.get(f"{prefix}fulltext.relPath")
+            escaped_text = _escape(text)
+            if rel_path:
+                clean_rel = str(rel_path).strip().lstrip("@")
+                clauses.append(f"CONTAINS([{s}].[{clean_rel}], '{escaped_text}')")
+            else:
+                clauses.append(f"CONTAINS([{s}].*, '{escaped_text}')")
+        return clauses
 
     def _compile_daterange(self, params: Dict[str, Any]) -> List[str]:
-        """Compiles date range predicates with support for relative date math."""
+        """Compiles date range predicates (daterange, 1_daterange, etc.) with relative date math."""
         clauses: List[str] = []
-        prop = params.get("daterange.property")
-        if not prop:
-            return clauses
-        
-        clean_prop = str(prop).strip().lstrip("@")
-        s = self.selector
-        lower = params.get("daterange.lowerBound")
-        upper = params.get("daterange.upperBound")
-        lower_op = str(params.get("daterange.lowerOperation", ">=")).strip()
-        upper_op = str(params.get("daterange.upperOperation", "<=")).strip()
+        prefixes = set()
+        for k in params:
+            match = re.match(r"^(\d+_)?daterange(\..+)?$", k)
+            if match:
+                prefixes.add(match.group(1) or "")
 
-        if lower:
-            parsed_lower = _parse_relative_date(str(lower))
-            escaped_lower = _escape(parsed_lower)
-            clauses.append(f"[{s}].[{clean_prop}] {lower_op} CAST('{escaped_lower}' AS DATE)")
-        if upper:
-            parsed_upper = _parse_relative_date(str(upper))
-            escaped_upper = _escape(parsed_upper)
-            clauses.append(f"[{s}].[{clean_prop}] {upper_op} CAST('{escaped_upper}' AS DATE)")
+        sorted_prefixes = sorted(list(prefixes), key=lambda x: (int(x.rstrip("_")) if x else -1))
+        s = self.selector
+
+        for prefix in sorted_prefixes:
+            prop = params.get(f"{prefix}daterange.property", "jcr:content/cq:lastModified")
+            clean_prop = str(prop).strip().lstrip("@")
+            lower = params.get(f"{prefix}daterange.lowerBound")
+            upper = params.get(f"{prefix}daterange.upperBound")
+            lower_op = str(params.get(f"{prefix}daterange.lowerOperation", ">=")).strip()
+            upper_op = str(params.get(f"{prefix}daterange.upperOperation", "<=")).strip()
+
+            if lower:
+                parsed_lower = _parse_relative_date(str(lower))
+                escaped_lower = _escape(parsed_lower)
+                clauses.append(f"[{s}].[{clean_prop}] {lower_op} CAST('{escaped_lower}' AS DATE)")
+            if upper:
+                parsed_upper = _parse_relative_date(str(upper))
+                escaped_upper = _escape(parsed_upper)
+                clauses.append(f"[{s}].[{clean_prop}] {upper_op} CAST('{escaped_upper}' AS DATE)")
 
         return clauses
 

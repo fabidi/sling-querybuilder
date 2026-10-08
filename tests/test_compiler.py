@@ -275,3 +275,98 @@ class TestQueryBuilderCompiler:
         assert compiled.is_explain is True
         assert compiled.sql2.startswith("EXPLAIN SELECT [n].* FROM [cq:Page] AS [n]")
 
+    def test_nodename_exact_and_wildcard(self):
+        c1 = compile_query({"nodename": "hotel-page"})
+        assert "NAME([n]) = 'hotel-page'" in c1.sql2
+
+        c2 = compile_query({"nodename": "novaria*"})
+        assert "NAME([n]) LIKE 'novaria%'" in c2.sql2
+
+    def test_multiple_numbered_paths(self):
+        compiled = compile_query({
+            "type": "cq:Page",
+            "1_path": "/content/novaria/us",
+            "2_path": "/content/novaria/eu"
+        })
+        assert "(ISDESCENDANTNODE([n], '/content/novaria/us') OR ISDESCENDANTNODE([n], '/content/novaria/eu'))" in compiled.sql2
+
+    def test_property_comparison_operators(self):
+        c_gt = compile_query({
+            "property": "jcr:content/rating",
+            "property.operation": ">",
+            "property.value": "4.5"
+        })
+        assert "[n].[jcr:content/rating] > '4.5'" in c_gt.sql2
+
+        c_gte = compile_query({
+            "property": "jcr:content/rooms",
+            "property.operation": "greater_equal",
+            "property.value": "100"
+        })
+        assert "[n].[jcr:content/rooms] >= '100'" in c_gte.sql2
+
+        c_lt = compile_query({
+            "property": "jcr:content/price",
+            "property.operation": "lower",
+            "property.value": "200"
+        })
+        assert "[n].[jcr:content/price] < '200'" in c_lt.sql2
+
+        c_lte = compile_query({
+            "property": "jcr:content/discount",
+            "property.operation": "<=",
+            "property.value": "50"
+        })
+        assert "[n].[jcr:content/discount] <= '50'" in c_lte.sql2
+
+    def test_property_like_and_unequals_multiple_values(self):
+        c_like = compile_query({
+            "property": "jcr:title",
+            "property.operation": "like",
+            "property.1_value": "%Resort%",
+            "property.2_value": "%Hotel%"
+        })
+        assert "([n].[jcr:title] LIKE '%Resort%' OR [n].[jcr:title] LIKE '%Hotel%')" in c_like.sql2
+
+        c_unequals = compile_query({
+            "property": "jcr:content/status",
+            "property.operation": "unequals",
+            "property.1_value": "archived",
+            "property.2_value": "draft"
+        })
+        assert "([n].[jcr:content/status] <> 'archived' AND [n].[jcr:content/status] <> 'draft')" in c_unequals.sql2
+
+    def test_property_contains_operation(self):
+        c_contains = compile_query({
+            "property": "jcr:content/description",
+            "property.operation": "contains",
+            "property.value": "waterfront"
+        })
+        assert "[n].[jcr:content/description] LIKE '%waterfront%'" in c_contains.sql2
+
+    def test_numbered_dateranges(self):
+        compiled = compile_query({
+            "type": "cq:Page",
+            "1_daterange.property": "jcr:content/cq:lastModified",
+            "1_daterange.lowerBound": "2024-01-01T00:00:00.000Z",
+            "2_daterange.property": "jcr:content/publicationDate",
+            "2_daterange.upperBound": "2024-12-31T23:59:59.000Z"
+        })
+        assert "[n].[jcr:content/cq:lastModified] >= CAST('2024-01-01T00:00:00.000Z' AS DATE)" in compiled.sql2
+        assert "[n].[jcr:content/publicationDate] <= CAST('2024-12-31T23:59:59.000Z' AS DATE)" in compiled.sql2
+
+    def test_deep_nested_boolean_groups(self):
+        compiled = compile_query({
+            "type": "cq:Page",
+            "1_group.p.or": "true",
+            "1_group.1_group.p.and": "true",
+            "1_group.1_group.1_property": "jcr:content/brand",
+            "1_group.1_group.1_property.value": "Novaria Grand",
+            "1_group.1_group.2_property": "jcr:content/rating",
+            "1_group.1_group.2_property.operation": ">=",
+            "1_group.1_group.2_property.value": "4.5",
+            "1_group.2_group.property": "jcr:content/featured",
+            "1_group.2_group.property.value": "true"
+        })
+        assert "WHERE (([n].[jcr:content/brand] = 'Novaria Grand' AND [n].[jcr:content/rating] >= '4.5') OR [n].[jcr:content/featured] = 'true')" in compiled.sql2
+

@@ -55,7 +55,9 @@ sequenceDiagram
   - Sorting & ordering (`orderby`, `orderby.sort=asc|desc`)
   - Pagination (`p.limit`, `p.offset`, unlimited `-1`)
 - **Drop-in HTTP Gateway:** Listens on `/bin/querybuilder.json`, forwards queries to Sling `/bin/query.json`, and reshapes responses to match AEM's exact payload structure (`success`, `results`, `total`, `offset`, `hits`).
-- **CLI Utility:** Instantly compile query strings in terminal or launch the gateway proxy.
+- **Oak EXPLAIN Query Planning:** Evaluate query execution plans (`p.explain=true` or `--explain`), detecting whether Oak will use Lucene, Property indexes, or dangerous unindexed repository traversals.
+- **Oak Index Definition Generator:** Programmatically produce enterprise `/oak:index` definitions (`OakPropertyIndex`, `OakLuceneIndex`) serialized to Adobe FileVault XML (`_oak_index/.content.xml`), Apache Sling Repoinit DDL, or JSON.
+- **CLI Utility:** Instantly compile queries, inspect Oak execution plans, generate index configurations, or launch the HTTP gateway proxy.
 - **Docker Compose Ready:** Out-of-the-box harness to launch `apache/sling:12`.
 
 ---
@@ -87,6 +89,27 @@ SELECT [n].* FROM [cq:Page] AS [n] WHERE ISDESCENDANTNODE([n], '/content/novaria
 --- Metadata ---
 Limit:  20
 Offset: 0
+```
+
+#### Explain Oak Query Plan:
+```bash
+# Compile and show Oak EXPLAIN SQL-2
+sling-querybuilder explain "path=/content/novaria&type=cq:Page&1_property=jcr:content/active&1_property.value=true"
+
+# Or execute EXPLAIN against live Sling to check index plan vs traversal:
+sling-querybuilder explain "path=/content/novaria&type=cq:Page" --execute --sling-url http://localhost:8080 -u admin -p admin
+```
+
+#### Generate Oak Index Definitions:
+```bash
+# Generate PropertyIndex in Adobe FileVault XML format:
+sling-querybuilder index-def --name hotelIdIdx --properties hotelId --declaring-types cq:Page --format filevault
+
+# Generate Lucene fulltext index in Apache Sling Repoinit DDL:
+sling-querybuilder index-def --name customLucene --type lucene --properties jcr:title,description --compat-version 2 --format repoinit
+
+# Generate Lucene index in JSON:
+sling-querybuilder index-def --name customLucene --type lucene --properties jcr:title,jcr:description --format json
 ```
 
 #### Launch the HTTP Gateway:
@@ -122,6 +145,19 @@ print(compiled.sql2)
 # Option B: Parse from URL query string
 compiler = QueryBuilderCompiler.from_query_string("path=/content/site&type=cq:Page")
 compiled = compiler.compile()
+
+# Option C: Oak Index Generation
+from sling_querybuilder import OakPropertyIndex, OakLuceneIndex
+
+# Generate a Property Index definition
+prop_idx = OakPropertyIndex(
+    name="hotelIdIdx",
+    property_names=["hotelId"],
+    declaring_node_types=["cq:Page"],
+    unique=True
+)
+xml_content = prop_idx.to_filevault_xml()  # Adobe FileVault XML for /oak:index
+repoinit_ddl = prop_idx.to_repoinit()       # Sling Repoinit DDL
 ```
 
 ---
@@ -142,7 +178,11 @@ compiled = compiler.compile()
 | `property=cq:lastModified&property.operation=exists` | `[n].[cq:lastModified] IS NOT NULL` |
 | `property=cq:lastModified&property.operation=not` | `[n].[cq:lastModified] IS NULL` |
 | `fulltext=luxury resort` | `CONTAINS([n].*, 'luxury resort')` |
-| `fulltext=spa&fulltext.relPath=jcr:content` | `CONTAINS([n].[jcr:content], 'spa')` |
+| `nodename=hotel*` | `NAME([n]) LIKE 'hotel%'` |
+| `1_path=/content/us&2_path=/content/eu` | `(ISDESCENDANTNODE([n], '/content/us') OR ISDESCENDANTNODE([n], '/content/eu'))` |
+| `property=price&property.operation=<&property.value=200` | `[n].[price] < '200'` |
+| `property=rooms&property.operation=>=&property.value=100` | `[n].[rooms] >= '100'` |
+| `1_group.p.or=true&1_group.1_property=...&1_group.2_property=...` | `([n].[prop1] = 'val1' OR [n].[prop2] = 'val2')` |
 | `orderby=@jcr:content/cq:lastModified&orderby.sort=desc` | `ORDER BY [n].[jcr:content/cq:lastModified] DESC` |
 
 ---
