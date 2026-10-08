@@ -50,3 +50,25 @@ class TestCLI:
         )
         mock_gw_instance.start.assert_called_once_with(blocking=True)
         mock_gw_instance.stop.assert_called_once()
+
+    def test_cli_explain_execution(self, capsys):
+        exit_code = main(["explain", "path=/content/novaria&type=cq:Page&1_property=hotelId&1_property.value=NVR-NYC-0001"])
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "EXPLAIN SELECT [n].* FROM [cq:Page]" in captured.out
+        assert "Oak Query Plan & Index Analysis" in captured.out
+        assert "Index Used:" in captured.out
+
+    def test_cli_index_def_execution(self, capsys):
+        exit_code = main([
+            "index-def",
+            "--name", "novariaHotelIndex",
+            "--type", "property",
+            "--properties", "hotelId,brandId",
+            "--format", "json"
+        ])
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert '"type": "property"' in captured.out
+        assert '"hotelId"' in captured.out
+        assert '"brandId"' in captured.out

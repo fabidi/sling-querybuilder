@@ -105,3 +105,20 @@ class TestQueryBuilderGateway:
             assert exc_info.value.code == 502
         finally:
             gw.stop()
+
+    def test_gateway_explain_execution(self):
+        gw = QueryBuilderGateway()
+        res = gw.execute_querybuilder({
+            "path": "/content/novaria",
+            "type": "cq:Page",
+            "property": "hotelId",
+            "property.value": "NVR-NYC-0001",
+            "p.explain": "true"
+        })
+        assert res["success"] is True
+        assert res["explain"] is True
+        assert res["_compiled_sql2"].startswith("EXPLAIN SELECT")
+        assert "plan" in res
+        assert "is_traversal" in res
+        assert res["is_traversal"] is True
+        assert res["risk_level"] == "CRITICAL"

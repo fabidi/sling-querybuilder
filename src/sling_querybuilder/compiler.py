@@ -55,6 +55,7 @@ class CompiledQuery:
     offset: int = 0
     selector: str = "n"
     parameters: Dict[str, Any] = field(default_factory=dict)
+    is_explain: bool = False
 
 
 class QueryBuilderCompiler:
@@ -86,7 +87,7 @@ class QueryBuilderCompiler:
             predicates[k] = v[0] if len(v) == 1 else v
         return cls(predicates, selector=selector)
 
-    def compile(self) -> CompiledQuery:
+    def compile(self, explain: bool = False) -> CompiledQuery:
         """Executes compilation from QueryBuilder predicates to JCR-SQL2."""
         selector = self.selector
         
@@ -96,8 +97,12 @@ class QueryBuilderCompiler:
         # 2. Gather WHERE clauses
         where_clauses: List[str] = self._compile_params(self.params)
 
+        # Check if explain is requested via argument or p.explain=true
+        is_explain = explain or str(self.params.get("p.explain", "false")).lower() in ("true", "1")
+        prefix = "EXPLAIN " if is_explain else ""
+
         # Build base SQL2 SELECT
-        sql = f"SELECT [{selector}].* FROM [{node_type}] AS [{selector}]"
+        sql = f"{prefix}SELECT [{selector}].* FROM [{node_type}] AS [{selector}]"
 
         if where_clauses:
             sql += f" WHERE {' AND '.join(where_clauses)}"
@@ -115,7 +120,8 @@ class QueryBuilderCompiler:
             limit=limit,
             offset=offset,
             selector=selector,
-            parameters=self.params
+            parameters=self.params,
+            is_explain=is_explain
         )
 
     def _compile_params(self, params: Dict[str, Any]) -> List[str]:
@@ -383,6 +389,6 @@ class QueryBuilderCompiler:
         return limit, offset
 
 
-def compile_query(predicates: Dict[str, Any], selector: str = "n") -> CompiledQuery:
+def compile_query(predicates: Dict[str, Any], selector: str = "n", explain: bool = False) -> CompiledQuery:
     """Convenience helper function to compile a predicate map directly."""
-    return QueryBuilderCompiler(predicates, selector=selector).compile()
+    return QueryBuilderCompiler(predicates, selector=selector).compile(explain=explain)

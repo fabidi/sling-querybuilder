@@ -257,3 +257,21 @@ class TestQueryBuilderCompiler:
         })
         assert "([n].[jcr:content/cq:tags] = 'novaria:beach' AND [n].[jcr:content/cq:tags] = 'novaria:spa')" in compiled.sql2
 
+    def test_explain_argument(self):
+        compiled = compile_query({
+            "type": "cq:Page",
+            "path": "/content/novaria"
+        }, explain=True)
+        assert compiled.is_explain is True
+        assert compiled.sql2.startswith("EXPLAIN SELECT [n].* FROM [cq:Page] AS [n]")
+        assert "WHERE ISDESCENDANTNODE([n], '/content/novaria')" in compiled.sql2
+
+    def test_explain_param_in_dict(self):
+        compiled = compile_query({
+            "type": "cq:Page",
+            "path": "/content/novaria",
+            "p.explain": "true"
+        })
+        assert compiled.is_explain is True
+        assert compiled.sql2.startswith("EXPLAIN SELECT [n].* FROM [cq:Page] AS [n]")
+
