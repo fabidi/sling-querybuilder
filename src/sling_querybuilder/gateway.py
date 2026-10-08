@@ -154,7 +154,8 @@ class QueryBuilderGateway:
             headers["Authorization"] = f"Basic {creds}"
 
         # Strategy 1: Standard Composum Nodes query endpoint (/bin/cpm/nodes/node.query.html)
-        cpm_url = f"{self.sling_base_url}/bin/cpm/nodes/node.query.html?query={urllib.parse.quote(sql2)}"
+        encoded_sql = urllib.parse.quote(sql2)
+        cpm_url = f"{self.sling_base_url}/bin/cpm/nodes/node.query.html?query={encoded_sql}&_query={encoded_sql}&type=JCR-SQL2"
         try:
             req = urllib.request.Request(cpm_url, headers=headers)
             with urllib.request.urlopen(req, timeout=15) as resp:
